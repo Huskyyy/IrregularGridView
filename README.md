@@ -30,7 +30,7 @@ Note that in the randomsize mode, you cannot determine the size of each child vi
 
 - CustomSize Mode.
 
-Firstly, initialize parameters.
+	Firstly, initialize parameters.
 		
 		// n is the number of spans.
 		IrregularLayoutManager layoutManager = new IrregularLayoutManager(getContext(), n);
@@ -67,6 +67,6 @@ Then, you should set the prefered layout size for each view during onBindViewHol
 	        return lp;
     	}
 
-Of course you can try any other methods that have the same effect.
+	Of course you can try any other methods that have the same effect.
 
-The IrregularLayoutManager will "try" to layout child views with the sizes you set. The child view may be shrunk in the horizontal direction due to space limit.
+	The IrregularLayoutManager will "try" to layout child views with the sizes you set. The child view may be shrunk in the horizontal direction due to space limit.
