@@ -61,7 +61,7 @@ public class SimpleFragment extends BaseFragment {
         });
         mGridView.setAdapter(mAdapter);
         DynamicItemAnimator animator = new DynamicItemAnimator();
-        mGridView.setItemAnimator(animator);
+        mGridView.setItemAnimator(new DefaultItemAnimator());
 
         return view;
     }
