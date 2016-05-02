@@ -9,22 +9,19 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.ListIterator;
 
-public class SimpleAdapter extends RecyclerView.Adapter<SimpleAdapter.MyViewHolder>{
+public class SimpleAdapter extends BaseAdapter{
 
-    private Context mContext;
-    private RecyclerView recyclerView;
     private ArrayList<String> mDataSet;
-    private ArrayList<Integer> mSelectedDataIndexSet;
-    private OnItemClickLitener mOnItemClickLitener;
+    private ArrayList<Integer> widthNums;
+    private ArrayList<Integer> heightNums;
 
-    public SimpleAdapter(Context context, RecyclerView rec, ArrayList<String> arr){
-        mContext = context;
-        recyclerView = rec;
-        mDataSet = arr;
-        mSelectedDataIndexSet = new ArrayList<>();
+    public SimpleAdapter(Context context, RecyclerView rec,
+                         ArrayList<String> data, ArrayList<Integer> w, ArrayList<Integer> h){
+        super(context, rec);
+        mDataSet = data;
+        widthNums = w;
+        heightNums = h;
     }
 
     @Override
@@ -35,28 +32,10 @@ public class SimpleAdapter extends RecyclerView.Adapter<SimpleAdapter.MyViewHold
     }
 
     @Override
-    public void onBindViewHolder(final MyViewHolder holder, int position){
-        holder.tv.setText(mDataSet.get(position));
-        if(mSelectedDataIndexSet != null && mSelectedDataIndexSet.contains(new Integer(position)) ){
-            updateSelectItem(holder);
-        }else{
-            updateUnselectItem(holder);
-        }
-
-        if(mOnItemClickLitener != null){
-            holder.itemView.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    mOnItemClickLitener.onItemClick(holder, holder.getAdapterPosition());
-                }
-            });
-            holder.itemView.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override
-                public boolean onLongClick(View v) {
-                    return mOnItemClickLitener.onItemLongClick(holder, holder.getAdapterPosition());
-                }
-            });
-        }
+    public void onBindViewHolder(final VH holder, int position){
+        ((MyViewHolder)holder).tv.setText(mDataSet.get(position));
+        setViewParams(holder.itemView, position);
+        super.onBindViewHolder(holder, position);
     }
 
     @Override
@@ -64,7 +43,7 @@ public class SimpleAdapter extends RecyclerView.Adapter<SimpleAdapter.MyViewHold
         return mDataSet.size();
     }
 
-    public static class MyViewHolder extends RecyclerView.ViewHolder {
+    public static class MyViewHolder extends BaseAdapter.VH {
         public TextView tv;
         public ImageView checkImage;
         public MyViewHolder(View v){
@@ -74,67 +53,22 @@ public class SimpleAdapter extends RecyclerView.Adapter<SimpleAdapter.MyViewHold
         }
     }
 
-    public interface OnItemClickLitener {
-        void onItemClick(MyViewHolder holder, int position);
-        boolean onItemLongClick(MyViewHolder holder, int position);
+    @Override
+    protected void updateSelectedItem(VH holder){
+        ((MyViewHolder)holder).checkImage.setVisibility(View.VISIBLE);
+        ((MyViewHolder)holder).tv.setActivated(true);
     }
 
-    public void setOnItemClickLitener(OnItemClickLitener mOnItemClickLitener)
-    {
-        this.mOnItemClickLitener = mOnItemClickLitener;
+    @Override
+    protected void updateUnselectedItem(VH holder){
+        ((MyViewHolder)holder).checkImage.setVisibility(View.GONE);
+        ((MyViewHolder)holder).tv.setActivated(false);
     }
 
-    public ArrayList<Integer> deleteSelectedItems() {
-        ArrayList<Integer> arrayList = new ArrayList<Integer>(mSelectedDataIndexSet);
-        if (mSelectedDataIndexSet != null && !mSelectedDataIndexSet.isEmpty()){
-            Collections.sort(mSelectedDataIndexSet);
-            Collections.copy(arrayList, mSelectedDataIndexSet);
-            mSelectedDataIndexSet.clear();
-        }
-        return arrayList;
-    }
-
-    public void resetSelectedItems(){
-        if(mSelectedDataIndexSet != null){
-            ListIterator<Integer> listIterator = mSelectedDataIndexSet.listIterator();
-            while(listIterator.hasNext()){
-                int position = listIterator.next();
-                MyViewHolder holder = (MyViewHolder)recyclerView.findViewHolderForAdapterPosition(position);
-                if(holder != null) {
-                    updateUnselectItem(holder);
-                }else{
-                    notifyItemChanged(position);
-                }
-            }
-            mSelectedDataIndexSet.clear();
-        }
-    }
-
-    public void reverseSelect(MyViewHolder holder, int position){
-        if(mSelectedDataIndexSet.contains(position)){
-            mSelectedDataIndexSet.remove(new Integer(position));
-            updateUnselectItem(holder);
-        }else if(!mSelectedDataIndexSet.contains(position)){
-            mSelectedDataIndexSet.add(position);
-            updateSelectItem(holder);
-        }
-    }
-
-    public void selectItem(MyViewHolder holder, int position){
-        if(!mSelectedDataIndexSet.contains(position)){
-            mSelectedDataIndexSet.add(position);
-            updateSelectItem(holder);
-        }
-    }
-
-    private void updateSelectItem(MyViewHolder holder){
-        holder.checkImage.setVisibility(View.VISIBLE);
-        holder.tv.setActivated(true);
-    }
-
-    private void updateUnselectItem(MyViewHolder holder){
-        holder.checkImage.setVisibility(View.GONE);
-        holder.tv.setActivated(false);
+    private void setViewParams(View v, int position){
+        IrregularLayoutManager.LayoutParams lp = (IrregularLayoutManager.LayoutParams)v.getLayoutParams();
+        lp.widthNum = widthNums.get(position);
+        lp.heightNum = heightNums.get(position);
     }
 
 }

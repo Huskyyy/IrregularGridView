@@ -12,24 +12,15 @@ import android.widget.ImageView;
 import com.bumptech.glide.Glide;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.ListIterator;
 
-public class SimpleImageAdapter extends RecyclerView.Adapter<SimpleImageAdapter.MyViewHolder>{
-
-    private Context mContext;
-    private RecyclerView recyclerView;
-    private ArrayList<String> mImageDataPath;
-    private ArrayList<Integer> mSelectedDataIndexSet;
-    private OnItemClickLitener mOnItemClickLitener;
+public class SimpleImageAdapter extends BaseAdapter{
 
     private int sizePerSpan;
+    private ArrayList<String> mImageDataPath;
 
     public SimpleImageAdapter(Context context, RecyclerView rec, ArrayList<String> arr){
-        mContext = context;
-        recyclerView = rec;
+        super(context, rec);
         mImageDataPath = arr;
-        mSelectedDataIndexSet = new ArrayList<>();
     }
 
     @Override
@@ -40,37 +31,23 @@ public class SimpleImageAdapter extends RecyclerView.Adapter<SimpleImageAdapter.
     }
 
     @Override
-    public void onBindViewHolder(final MyViewHolder holder, int position){
-        ViewGroup.LayoutParams lp = updateViewParams(mImageDataPath.get(position),
+    public void onBindViewHolder(final VH holder, int position){
+
+        IrregularLayoutManager.LayoutParams lp = setViewParams(mImageDataPath.get(position),
                 holder.itemView);
+
+        if(sizePerSpan == 0){
+            sizePerSpan = ((IrregularLayoutManager)recyclerView.getLayoutManager()).getSizePerSpan() + 1;
+        }
 
         Glide.with(mContext)
                 .load("file://" + mImageDataPath.get(position))
-                .override(lp.width, lp.height)
+                .override(lp.widthNum * sizePerSpan, lp.heightNum * sizePerSpan)
                 .centerCrop()
                 .placeholder(R.drawable.bg_empty_photo)
-                .into(holder.photo);
+                .into(((MyViewHolder)holder).photo);
 
-        if(mSelectedDataIndexSet != null && mSelectedDataIndexSet.contains(new Integer(position)) ){
-            updateSelectItem(holder);
-        }else{
-            updateUnselectItem(holder);
-        }
-
-        if(mOnItemClickLitener != null){
-            holder.itemView.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    mOnItemClickLitener.onItemClick(holder, holder.getAdapterPosition());
-                }
-            });
-            holder.itemView.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override
-                public boolean onLongClick(View v) {
-                    return mOnItemClickLitener.onItemLongClick(holder, holder.getAdapterPosition());
-                }
-            });
-        }
+        super.onBindViewHolder(holder, position);
     }
 
     @Override
@@ -78,7 +55,7 @@ public class SimpleImageAdapter extends RecyclerView.Adapter<SimpleImageAdapter.
         return mImageDataPath.size();
     }
 
-    public static class MyViewHolder extends RecyclerView.ViewHolder {
+    public static class MyViewHolder extends BaseAdapter.VH {
         public ImageView photo;
         public ImageView checkImage;
         public MyViewHolder(View v){
@@ -88,75 +65,19 @@ public class SimpleImageAdapter extends RecyclerView.Adapter<SimpleImageAdapter.
         }
     }
 
-    public interface OnItemClickLitener {
-        void onItemClick(MyViewHolder holder, int position);
-        boolean onItemLongClick(MyViewHolder holder, int position);
+    @Override
+    protected void updateSelectedItem(VH holder){
+        ((MyViewHolder)holder).checkImage.setVisibility(View.VISIBLE);
+        ((MyViewHolder)holder).photo.setColorFilter(Color.argb(120, 00, 00, 00));
     }
 
-    public void setOnItemClickLitener(OnItemClickLitener mOnItemClickLitener)
-    {
-        this.mOnItemClickLitener = mOnItemClickLitener;
+    @Override
+    protected void updateUnselectedItem(VH holder){
+        ((MyViewHolder)holder).checkImage.setVisibility(View.GONE);
+        ((MyViewHolder)holder).photo.clearColorFilter();
     }
 
-    public ArrayList<Integer> deleteSelectedItems() {
-        ArrayList<Integer> arrayList = new ArrayList<Integer>(mSelectedDataIndexSet);
-        if (mSelectedDataIndexSet != null && !mSelectedDataIndexSet.isEmpty()){
-            Collections.sort(mSelectedDataIndexSet);
-            Collections.copy(arrayList, mSelectedDataIndexSet);
-            mSelectedDataIndexSet.clear();
-        }
-        return arrayList;
-    }
-
-    public void resetSelectedItems(){
-        if(mSelectedDataIndexSet != null){
-            ListIterator<Integer> listIterator = mSelectedDataIndexSet.listIterator();
-            while(listIterator.hasNext()){
-                int position = listIterator.next();
-                MyViewHolder holder = (MyViewHolder)recyclerView
-                        .findViewHolderForAdapterPosition(position);
-                if(holder != null) {
-                    updateUnselectItem(holder);
-                }else{
-                    notifyItemChanged(position);
-                }
-            }
-            mSelectedDataIndexSet.clear();
-        }
-    }
-
-    public void reverseSelect(MyViewHolder holder, int position){
-        if(mSelectedDataIndexSet.contains(position)){
-            mSelectedDataIndexSet.remove(new Integer(position));
-            updateUnselectItem(holder);
-        }else if(!mSelectedDataIndexSet.contains(position)){
-            mSelectedDataIndexSet.add(position);
-            updateSelectItem(holder);
-        }
-    }
-
-    public void selectItem(MyViewHolder holder, int position){
-        if(!mSelectedDataIndexSet.contains(position)){
-            mSelectedDataIndexSet.add(position);
-            updateSelectItem(holder);
-        }
-    }
-
-    private void updateSelectItem(MyViewHolder holder){
-        holder.checkImage.setVisibility(View.VISIBLE);
-        holder.photo.setColorFilter(Color.argb(120, 00, 00, 00));
-    }
-
-    private void updateUnselectItem(MyViewHolder holder){
-        holder.checkImage.setVisibility(View.GONE);
-        holder.photo.clearColorFilter();
-    }
-
-    public void setSizePerSpan(int val){
-        sizePerSpan = val;
-    }
-
-    private ViewGroup.LayoutParams updateViewParams(String path, View view){
+    private IrregularLayoutManager.LayoutParams setViewParams(String path, View view){
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(path, options);
@@ -171,10 +92,9 @@ public class SimpleImageAdapter extends RecyclerView.Adapter<SimpleImageAdapter.
         }else if(imageHeight >= imageWidth * 1.3){
             heightNum = 2;
         }
-        ViewGroup.LayoutParams lp = view.getLayoutParams();
-        lp.width = widthNum * sizePerSpan;
-        lp.height = heightNum * sizePerSpan;
-        //view.setLayoutParams(lp);
+        IrregularLayoutManager.LayoutParams lp = (IrregularLayoutManager.LayoutParams)view.getLayoutParams();
+        lp.widthNum = widthNum;
+        lp.heightNum = heightNum;
         return lp;
     }
 

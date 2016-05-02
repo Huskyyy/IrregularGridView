@@ -23,12 +23,11 @@ import com.bumptech.glide.Glide;
 
 import java.util.ArrayList;
 
-public class SimpleImageFragment extends Fragment implements ActionMode.Callback{
+public class SimpleImageFragment extends BaseFragment{
 
     private RecyclerView mGridView;
     private ArrayList<String> mImageDataPath;
     private SimpleImageAdapter mImageAdapter;
-    private ActionMode mActionMode;
 
     public SimpleImageFragment() {
         // Required empty public constructor
@@ -42,13 +41,6 @@ public class SimpleImageFragment extends Fragment implements ActionMode.Callback
     }
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        initImageData();
-        setHasOptionsMenu(true);
-    }
-
-    @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_base, container, false);
@@ -56,21 +48,18 @@ public class SimpleImageFragment extends Fragment implements ActionMode.Callback
         mGridView = (RecyclerView)view.findViewById(R.id.irregular_gridview);
 
         IrregularLayoutManager layoutManager = new IrregularLayoutManager(getContext(), 4);
-        layoutManager.setRandomSize(false);
         mGridView.setLayoutManager(layoutManager);
 
         mImageAdapter = new SimpleImageAdapter(getContext(), mGridView, mImageDataPath);
-        mImageAdapter.setSizePerSpan(getWindowWidth() / 4 + 1);
-        mImageAdapter.setOnItemClickLitener(new SimpleImageAdapter.OnItemClickLitener() {
+        mImageAdapter.setOnItemClickLitener(new BaseAdapter.OnItemClickLitener() {
             @Override
-            public void onItemClick(SimpleImageAdapter.MyViewHolder holder, int position) {
+            public void onItemClick(BaseAdapter.VH holder, int position) {
                 if (mActionMode != null) {
                     mImageAdapter.reverseSelect(holder, position);
                 }
             }
-
             @Override
-            public boolean onItemLongClick(SimpleImageAdapter.MyViewHolder holder, int position) {
+            public boolean onItemLongClick(BaseAdapter.VH holder, int position) {
                 if (mActionMode == null) {
                     mActionMode = ((AppCompatActivity) getContext())
                             .startSupportActionMode(SimpleImageFragment.this);
@@ -87,61 +76,7 @@ public class SimpleImageFragment extends Fragment implements ActionMode.Callback
     }
 
     @Override
-    public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
-        super.onCreateOptionsMenu(menu, inflater);
-        inflater.inflate(R.menu.appbar_menu, menu);
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        switch(item.getItemId()){
-            case R.id.action_select:
-                mActionMode = ((AppCompatActivity)getContext())
-                        .startSupportActionMode(SimpleImageFragment.this);
-                return true;
-            default:
-                return super.onOptionsItemSelected(item);
-        }
-    }
-
-
-    // Called when the action mode is created; startActionMode() was called
-    @Override
-    public boolean onCreateActionMode(ActionMode mode, Menu menu) {
-        // Inflate a menu resource providing context menu items
-        MenuInflater inflater = mode.getMenuInflater();
-        inflater.inflate(R.menu.context_menu, menu);
-        return true;
-    }
-
-    // Called each time the action mode is shown. Always called after onCreateActionMode, but
-    // may be called multiple times if the mode is invalidated.
-    @Override
-    public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
-        return false; // Return false if nothing is done
-    }
-
-    // Called when the user selects a contextual menu item
-    @Override
-    public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
-        switch (item.getItemId()) {
-            case R.id.menu_delete:
-                deleteSelectedItems();
-                mode.finish(); // Action picked, so close the CAB
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    // Called when the user exits the action mode
-    @Override
-    public void onDestroyActionMode(ActionMode mode) {
-        resetSelectedItems();
-        mActionMode = null;
-    }
-
-    public void initImageData(){
+    public void initData(){
         mImageDataPath = new ArrayList<>();
 
         String picFolder = Environment.getExternalStoragePublicDirectory(
@@ -162,8 +97,9 @@ public class SimpleImageFragment extends Fragment implements ActionMode.Callback
         cursor.close();
     }
 
+    @Override
     public void deleteSelectedItems() {
-        ArrayList<Integer> list = mImageAdapter.deleteSelectedItems();
+        ArrayList<Integer> list = mImageAdapter.getSelectedItems();
         for (int i = list.size() - 1; i >= 0; i--){
             int index = list.get(i);
             mImageDataPath.remove(index);
@@ -171,16 +107,10 @@ public class SimpleImageFragment extends Fragment implements ActionMode.Callback
         }
     }
 
+    @Override
     public void resetSelectedItems(){
         mImageAdapter.resetSelectedItems();
     }
 
-    public int getWindowWidth(){
-        WindowManager wm = (WindowManager) getContext()
-                .getSystemService(Context.WINDOW_SERVICE);
-        Point point = new Point();
-        wm.getDefaultDisplay().getSize(point);
-        return point.x;
-    }
 }
 

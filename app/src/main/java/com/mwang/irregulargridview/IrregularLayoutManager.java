@@ -10,9 +10,7 @@ import android.view.ViewGroup;
 
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Iterator;
-import java.util.Random;
 import java.util.TreeMap;
 
 /**
@@ -72,19 +70,8 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
     /* The first span index the item occupied. */
     private SparseIntArray itemOccupiedStartSpan;
 
-    /* Determine whether the item is generate with random size for the first time. */
-    private boolean isRandomSize;
-
     /* The scroll offset. */
     private int scrollOffset;
-
-    /* The cache for the position of items removed. */
-    private HashSet<Integer> itemRemovedPositionCache;
-    /**
-     * Store the position of current attached and not removed items for the "real" layout.
-     * This is calculated during the pre-layout.
-     */
-    private HashSet<Integer> itemNeededPositionCache;
 
     /* The first item which is removed with notifyItemRemoved(). */
     private int firstChangedPosition;
@@ -92,18 +79,34 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
     private int removedTopAndBoundPositionCount;
     /**
      * If it is true, we need to update some parameters,
-     * i.e., firstChangedPosition, removedTopAndBoundPositionCount, itemRemovedPositionCache.
+     * i.e., firstChangedPosition, removedTopAndBoundPositionCount.
      */
     private boolean isBeforePreLayout;
 
     /* A disappearing view cache with descending order. */
-    private TreeMap<Integer, DisappearingView> disappearingViewCache;
+    private TreeMap<Integer, DisappearingViewParams> disappearingViewCache;
 
     /* Determine whether onLayoutChildren() is triggered with notifyDataSetChanged(). */
     private boolean isNotifyDataSetChanged;
 
     /* The Rect for the items to be laid out. */
     final Rect mDecorInsets = new Rect();
+
+    /**
+     * The following params is calculated during the pre-layout phase
+     * and is used for the real layout.
+     */
+    private int fakeSpanBottomMin;
+    private int fakeSpanBottomMax;
+    private int fakeCurrentPosition;
+    private int fakeFirstAttachedItemPosition;
+    private int[] fakeSpanTop;
+    private int[] fakeSpanBottom;
+    private int fakeFirstTwoEmptyBottomSpanIndex;
+    private int fakeFirstOneEmptyBottomSpanIndex;
+    private SparseIntArray fakeItemLayoutWidthCache;
+    private SparseIntArray fakeItemLayoutHeightCache;
+    private SparseIntArray fakeItemOccupiedStartSpan;
 
     /**
      * Default number of the spans is DEFAULT_SPAN_COUNT.
@@ -121,7 +124,6 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
     public IrregularLayoutManager(Context context, int spanCount){
         super();
         setSpanCount(spanCount);
-        isRandomSize = true;
     }
 
     /**
@@ -138,13 +140,11 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
     }
 
     /**
-     * If you want to generate a gridView with random size, set it as true.
-     * Otherwise, the IrregularLayoutManager will generate item according the size of the view.
-     * The default value is true.
-     * @param flag
+     *
+     * @return sizePerSpan
      */
-    public void setRandomSize(boolean flag){
-        isRandomSize = flag;
+    public int getSizePerSpan(){
+        return sizePerSpan;
     }
 
     /**
@@ -177,7 +177,6 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
      * and after the pre-layout for visible items.
      * If there are items removed out of the top border, we update the firstChangedPosition
      * and removedTopAndBoundPositionCount.
-     * For each removed item, we store the position with itemRemovedPositionCache.
      * @param recyclerView
      * @param positionStart The start position of removed items.
      * @param itemCount The number of removed items from the start position.
@@ -189,9 +188,6 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
                 firstChangedPosition = positionStart;
             if(firstChangedPosition < firstAttachedItemPosition)
                 removedTopAndBoundPositionCount += itemCount;
-            for(int i = 0; i < itemCount; i++) {
-                itemRemovedPositionCache.add(positionStart + i);
-            }
         }
     }
 
@@ -216,30 +212,24 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             if(getChildCount() == 0)
                 return;
             // For the current attached views, find the views removed and update
-            // itemRemovedPositionCache, removedTopAndBoundPositionCount and firstChangedPosition.
+            // removedTopAndBoundPositionCount and firstChangedPosition.
             final int childCount = getChildCount();
             for(int i = 0; i < childCount; i++){
                 View child = getChildAt(i);
                 RecyclerView.LayoutParams lp = (RecyclerView.LayoutParams) child.getLayoutParams();
                 if(lp.isItemRemoved()){
-                    itemRemovedPositionCache.add(firstAttachedItemPosition + i);
                     removedTopAndBoundPositionCount++;
                     if(firstChangedPosition == -1 ||
                             firstAttachedItemPosition + i < firstChangedPosition){
                         firstChangedPosition = firstAttachedItemPosition + i;
                     }
-                }else{
-                    // For views not removed, calculate the position for the real layout
-                    // and store the position with itemNeededPositionCache.
-                    itemNeededPositionCache.add(
-                            firstAttachedItemPosition + i - removedTopAndBoundPositionCount);
                 }
             }
             // If removedTopAndBoundPositionCount = 0, items changes out of the bottom border,
             // So we have nothing to do during the pre-layout.
             // Otherwise we need to lay out current attached views and appearing views.
             if(removedTopAndBoundPositionCount != 0){
-                layoutPotentialAppearingViews(recycler, state);
+                layoutAttachedAndAppearingViews(recycler, state);
             }
             // Reset isBeforePreLayout after the pre-layout ends.
             isBeforePreLayout = false;
@@ -260,6 +250,7 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             initializeLayoutParameters();
             fillGrid(recycler, state, true);
             isNotifyDataSetChanged = false;
+            return;
         }
 
         // Adapter data set changes.
@@ -279,8 +270,6 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             isBeforePreLayout = true;
 //            firstChangedPosition = -1;
 //            removedTopAndBoundPositionCount = 0;
-//            itemRemovedPositionCache.clear();
-//            itemNeededPositionCache.clear();
             return;
         }
         // There are removed items.
@@ -291,36 +280,27 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
                 itemLayoutHeightCache.delete(i);
                 itemOccupiedStartSpan.delete(i);
             }
+            if(fakeItemLayoutWidthCache.get(i, 0) != 0){
+                itemLayoutWidthCache.put(i, fakeItemLayoutWidthCache.get(i));
+                itemLayoutHeightCache.put(i, fakeItemLayoutHeightCache.get(i));
+                itemOccupiedStartSpan.put(i, fakeItemOccupiedStartSpan.get(i));
+            }
         }
+        fakeItemLayoutWidthCache.clear();
+        fakeItemLayoutHeightCache.clear();
+        fakeItemOccupiedStartSpan.clear();
+
         detachAndScrapAttachedViews(recycler);
 
         // There are removed items out of the upper bound.
         if(firstChangedPosition < firstAttachedItemPosition) {
-            // Calculate the spanTop begin with the firstChangedPosition
-            // and update layout parameters.
-            topBorder = getPaddingTop() - scrollOffset;
-            Arrays.fill(spanTop, topBorder);
-            for (int i = 0; i < firstChangedPosition; i++) {
-                for (int j = 0; j < itemLayoutWidthCache.get(i); j++) {
-                    int spanIndex = itemOccupiedStartSpan.get(i) + j;
-                    spanTop[spanIndex] += itemLayoutHeightCache.get(i) * sizePerSpan;
-                }
-            }
-            updateSpanTopParameters();
+            mCurrentPosition = firstAttachedItemPosition;
+            lastAttachedItemPosition = firstAttachedItemPosition;
+            topBorder = getPaddingTop();
             bottomBorder = getHeight() - getPaddingBottom();
             spanBottom = Arrays.copyOf(spanTop, mSpanCount);
             updateSpanBottomParameters();
-            mCurrentPosition = firstChangedPosition;
-            // Fill from the spanTop until bottomBorder.
-            // Note that we just lay out visible views.
-            // The firstAttachedItemPosition may change,
-            // set it as -1 and update it during the layout
-            firstAttachedItemPosition = -1;
-            lastAttachedItemPosition = -1;
-            fillGrid(recycler, state, true, true);
-            // After fill, we need to update layout parameters
-            topBorder = getPaddingTop();
-            updateSpanTopParameters();
+            fillGrid(recycler, state, true);
             // If it cannot fill until the bottomBorder, call  scrollBy() to fill.
             if(spanBottomMax < bottomBorder){
                 scrollBy(spanBottomMax - bottomBorder, recycler, state);
@@ -345,8 +325,6 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
         isBeforePreLayout = true;
         firstChangedPosition = -1;
         removedTopAndBoundPositionCount = 0;
-        itemRemovedPositionCache.clear();
-        itemNeededPositionCache.clear();
         disappearingViewCache.clear();
     }
 
@@ -490,8 +468,6 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
         //isRandomSize = true;
         scrollOffset = 0;
         isBeforePreLayout = true;
-        itemRemovedPositionCache = new HashSet<>();
-        itemNeededPositionCache = new HashSet<>();
         firstChangedPosition = -1;
         removedTopAndBoundPositionCount = 0;
         disappearingViewCache = new TreeMap<>(new Comparator<Integer>() {
@@ -501,6 +477,10 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             }
         });
         isNotifyDataSetChanged = false;
+
+        fakeItemLayoutWidthCache = new SparseIntArray();
+        fakeItemLayoutHeightCache = new SparseIntArray();
+        fakeItemOccupiedStartSpan = new SparseIntArray();
     }
 
     /**
@@ -532,6 +512,33 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
     }
 
     /**
+     * Update fake params.
+     */
+    private void updateFakeSpanBottomParameters(){
+        fakeSpanBottomMin = fakeSpanBottom[0];
+        fakeSpanBottomMax = fakeSpanBottom[0];
+        for(int i = 1; i < mSpanCount; i++){
+            if(fakeSpanBottomMin > fakeSpanBottom[i])
+                fakeSpanBottomMin = fakeSpanBottom[i];
+            if(fakeSpanBottomMax < fakeSpanBottom[i])
+                fakeSpanBottomMax = fakeSpanBottom[i];
+        }
+        for(int i = 0; i < mSpanCount; i++){
+            if(fakeSpanBottom[i] == fakeSpanBottomMin){
+                fakeFirstOneEmptyBottomSpanIndex = i;
+                break;
+            }
+        }
+        fakeFirstTwoEmptyBottomSpanIndex = -1;
+        for(int i = fakeFirstOneEmptyBottomSpanIndex; i < mSpanCount - 1; i++){
+            if(fakeSpanBottom[i] == fakeSpanBottomMin && fakeSpanBottom[i + 1] == fakeSpanBottomMin){
+                fakeFirstTwoEmptyBottomSpanIndex = i;
+                break;
+            }
+        }
+    }
+
+    /**
      * Update spanTopMin and spanTopMax.
      */
     private void updateSpanTopParameters(){
@@ -551,7 +558,8 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
      * @param totalSpace
      */
     private void calculateSpanWidthBorders(int totalSpace){
-        if(spanWidthBorders == null || spanWidthBorders.length != mSpanCount + 1 || spanWidthBorders[spanWidthBorders.length - 1] != totalSpace){
+        if(spanWidthBorders == null || spanWidthBorders.length != mSpanCount + 1
+                || spanWidthBorders[spanWidthBorders.length - 1] != totalSpace){
             spanWidthBorders = new int[mSpanCount + 1];
         }
         spanWidthBorders[0] = 0;
@@ -578,7 +586,8 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
      * @param state
      * @param isFillBottom The direction, from the top to the bottom or the reverse.
      */
-    private void fillGrid(RecyclerView.Recycler recycler, RecyclerView.State state, boolean isFillBottom) {
+    private void fillGrid(RecyclerView.Recycler recycler, RecyclerView.State state,
+                          boolean isFillBottom) {
         while ( ( (isFillBottom && spanBottomMin <= bottomBorder) || (!isFillBottom && spanTopMax >= topBorder) )
                 && mCurrentPosition >=0 && mCurrentPosition < state.getItemCount()) {
             layoutChunk(recycler, state, isFillBottom);
@@ -586,80 +595,129 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
     }
 
     /**
-     * Fill the area for animation.
-     * After notifyItemRemoved() is called, this method is called during the real layout.
-     * We just lay out views in the visible area.
+     * Fill the area for pre-layout.
+     * On the one hand, we layout current attached view and appearing views.
+     * On the other hand, we calculate the layout params for the real layout.
+     * And the stop criterion is calculated according the params.
      * @param recycler
      * @param state
-     * @param isFillBottom
-     * @param isForAnimation
      */
-    private void fillGrid(RecyclerView.Recycler recycler, RecyclerView.State state, boolean isFillBottom, boolean isForAnimation) {
-        while ( ( (isFillBottom && spanBottomMin <= bottomBorder) || (!isFillBottom && spanTopMax >= topBorder) )
+    private void fillGridForPreLayout(RecyclerView.Recycler recycler, RecyclerView.State state) {
+        while ( fakeSpanBottomMin <= bottomBorder
                 && mCurrentPosition >=0 && mCurrentPosition < state.getItemCount()) {
-            layoutChunk(recycler, state, isFillBottom, isForAnimation);
+            layoutChunk(recycler, state, true, true);
         }
     }
 
 
     /**
-     * Here we lay out current attached views and potential appearing views.
+     * Here we lay out current attached views and appearing views.
+     * Called when there are removed items out of the top border and in the visible area.
      * @param recycler
      * @param state
      */
-    private void layoutPotentialAppearingViews(RecyclerView.Recycler recycler, RecyclerView.State state){
+    private void layoutAttachedAndAppearingViews(RecyclerView.Recycler recycler,
+                                                 RecyclerView.State state){
 
-        // Store the layout parameters.
-        int firstAttachedItemPositionTemp = firstAttachedItemPosition;
-        int lastAttachedItemPositionTemp = lastAttachedItemPosition;
-        int[] spanTopTemp = Arrays.copyOf(spanTop, mSpanCount);
-        int[] spanBottomTemp = Arrays.copyOf(spanBottom, mSpanCount);
+        // There are no removed items out of the top border.
+        // So we just layout from the firstAttachedItemPosition.
+        // We do the pre layout and calculate the layout params for the real layout.
+        if(firstChangedPosition >= firstAttachedItemPosition){
+            // Store the layout parameters.
+            int firstAttachedItemPositionTemp = firstAttachedItemPosition;
+            int lastAttachedItemPositionTemp = lastAttachedItemPosition;
+            int[] spanTopTemp = Arrays.copyOf(spanTop, mSpanCount);
+            int[] spanBottomTemp = Arrays.copyOf(spanBottom, mSpanCount);
 
-        topBorder = getPaddingTop();
-        bottomBorder = getHeight() - getPaddingBottom();
-        spanBottom = Arrays.copyOf(spanTop, mSpanCount);
-        updateSpanBottomParameters();
+            topBorder = getPaddingTop();
+            bottomBorder = getHeight() - getPaddingBottom();
+            spanBottom = Arrays.copyOf(spanTop, mSpanCount);
+            updateSpanBottomParameters();
 
-        detachAndScrapAttachedViews(recycler);
+            detachAndScrapAttachedViews(recycler);
 
-        // Lay out current attached views.
-        mCurrentPosition = firstAttachedItemPosition;
-        lastAttachedItemPosition = firstAttachedItemPosition;
-        fillGrid(recycler, state, true);
+            mCurrentPosition = firstAttachedItemPosition;
+            lastAttachedItemPosition = firstAttachedItemPosition;
 
-        // Lay out potential appearing views out of the top border.
-        // Here we just lay out extra items based on the estimate.
-        int num = firstAttachedItemPosition - itemRemovedPositionCache.size() * 6;
-        mCurrentPosition = firstAttachedItemPosition - 1;
-        while(mCurrentPosition >= 0 && mCurrentPosition < state.getItemCount() && mCurrentPosition >= num){
-            layoutChunk(recycler, state, false);
+            // Set the fake params.
+            fakeSpanBottomMin = spanBottomMin;
+            fakeSpanBottomMax = spanBottomMax;
+            fakeCurrentPosition = mCurrentPosition;
+            fakeFirstAttachedItemPosition = firstAttachedItemPosition;
+            fakeFirstOneEmptyBottomSpanIndex = firstOneEmptyBottomSpanIndex;
+            fakeFirstTwoEmptyBottomSpanIndex = firstTwoEmptyBottomSpanIndex;
+            fakeSpanTop = Arrays.copyOf(spanTop, mSpanCount);
+            fakeSpanBottom = Arrays.copyOf(spanBottom, mSpanCount);
+
+            // Lay out current attached views and appearing views.
+            fillGridForPreLayout(recycler, state);
+
+            // Restore the layout parameters.
+            firstAttachedItemPosition = firstAttachedItemPositionTemp;
+            lastAttachedItemPosition = lastAttachedItemPositionTemp;
+            spanTop = Arrays.copyOf(spanTopTemp, mSpanCount);
+            spanBottom = Arrays.copyOf(spanBottomTemp, mSpanCount);
+            updateSpanTopParameters();
+            updateSpanBottomParameters();
+        }else{ // There are removed items out of the top border.
+
+            // Calculate the spanTop begin with the firstChangedPosition
+            // and update layout parameters.
+            topBorder = getPaddingTop() - scrollOffset;
+            Arrays.fill(spanTop, topBorder);
+            for (int i = 0; i < firstChangedPosition; i++) {
+                for (int j = 0; j < itemLayoutWidthCache.get(i); j++) {
+                    int spanIndex = itemOccupiedStartSpan.get(i) + j;
+                    spanTop[spanIndex] += itemLayoutHeightCache.get(i) * sizePerSpan;
+                }
+            }
+            updateSpanTopParameters();
+            bottomBorder = getHeight() - getPaddingBottom();
+            spanBottom = Arrays.copyOf(spanTop, mSpanCount);
+            updateSpanBottomParameters();
+            mCurrentPosition = firstChangedPosition;
+            // Fill from the spanTop until bottomBorder.
+            // Note that we just lay out attached views and appearing views.
+            // The firstAttachedItemPosition may change,
+            // set it as -1 and update it during the layout
+            firstAttachedItemPosition = -1;
+            lastAttachedItemPosition = -1;
+
+            detachAndScrapAttachedViews(recycler);
+
+            // Set the fake params.
+            fakeSpanBottomMin = spanBottomMin;
+            fakeSpanBottomMax = spanBottomMax;
+            fakeCurrentPosition = mCurrentPosition;
+            fakeFirstAttachedItemPosition = firstAttachedItemPosition;
+            fakeFirstOneEmptyBottomSpanIndex = firstOneEmptyBottomSpanIndex;
+            fakeFirstTwoEmptyBottomSpanIndex = firstTwoEmptyBottomSpanIndex;
+            fakeSpanTop = Arrays.copyOf(spanTop, mSpanCount);
+            fakeSpanBottom = Arrays.copyOf(spanBottom, mSpanCount);
+
+            // Lay out current attached views and appearing views.
+            fillGridForPreLayout(recycler, state);
+
+            // Restore the layout parameters.
+            firstAttachedItemPosition = fakeFirstAttachedItemPosition;
+            spanTop = Arrays.copyOf(fakeSpanTop, mSpanCount);
+            spanBottom = Arrays.copyOf(fakeSpanBottom, mSpanCount);
+            updateSpanTopParameters();
+            updateSpanBottomParameters();
         }
-
-        // Lay out potential appearing views out of the bottom border.
-        num = lastAttachedItemPosition + itemRemovedPositionCache.size() * 6;
-        mCurrentPosition = lastAttachedItemPosition + 1;
-        while(mCurrentPosition >= 0 && mCurrentPosition < state.getItemCount() && mCurrentPosition <= num){
-            layoutChunk(recycler, state, true);
-        }
-
-        // Restore the layout parameters.
-        firstAttachedItemPosition = firstAttachedItemPositionTemp;
-        lastAttachedItemPosition = lastAttachedItemPositionTemp;
-        spanTop = Arrays.copyOf(spanTopTemp, mSpanCount);
-        spanBottom = Arrays.copyOf(spanBottomTemp, mSpanCount);
-        updateSpanTopParameters();
-        updateSpanBottomParameters();
 
     }
 
     // Lay out disappearing views from the last one to the first one
     private void layoutDisappearingViews(RecyclerView.Recycler recycler, RecyclerView.State state){
-        Iterator<DisappearingView> iterator = disappearingViewCache.values().iterator();
+        Iterator<Integer> iterator = disappearingViewCache.keySet().iterator();
         while(iterator.hasNext()){
-            DisappearingView disView = iterator.next();
-            addDisappearingView(disView.view, 0);
-            disView.view.measure(disView.widthSpec, disView.heightSpec);
-            layoutDecorated(disView.view, disView.left, disView.top, disView.right, disView.bottom);
+            int position = iterator.next();
+            View view = recycler.getViewForPosition(position);
+            DisappearingViewParams params = disappearingViewCache.get(position);
+            addDisappearingView(view, 0);
+            view.measure(params.widthSpec, params.heightSpec);
+            layoutDecorated(view, params.left, params.top, params.right, params.bottom);
         }
     }
 
@@ -669,35 +727,38 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
      * @param state
      * @param isFillBottom
      */
-    private void layoutChunk(RecyclerView.Recycler recycler, RecyclerView.State state, boolean isFillBottom){
+    private void layoutChunk(RecyclerView.Recycler recycler, RecyclerView.State state,
+                             boolean isFillBottom){
         layoutChunk(recycler, state, isFillBottom, false);
     }
 
     /**
      * The layout process for each item.
-     * If isForAnimation = true, we just lay out views in the visible area.
+     * If isPreLayout = true, we lay out attached views and appearing views.
      * Otherwise we lay out views between the topBorder and the bottomBorder.
      * @param recycler
      * @param state
      * @param isFillBottom
+     * @param isPreLayout
      */
-    private void layoutChunk(RecyclerView.Recycler recycler, RecyclerView.State state, boolean isFillBottom, boolean isForAnimation){
+    private void layoutChunk(RecyclerView.Recycler recycler, RecyclerView.State state,
+                             boolean isFillBottom, boolean isPreLayout){
 
-        Random r = new Random();
-        int widthNum = 0;
-        int heightNum = 0;
-        int nextItemIndex = 0;
-        View view;
-        DisappearingView disappearingView = null;
-        // If disappearingViewCache contains the current view to be laid out,
-        // just get it. This happens when too many items are removed,
+        int widthNum = 0, heightNum = 0, nextItemIndex = 0;
+
+        int fakeWidthNum  = 0, fakeHeightNum = 0, fakeNextItemIndex = 0;
+
+        View view = null;
+        DisappearingViewParams params = null;
+        // If disappearingViewCache contains the params of the current view to be laid out,
+        // get its params. This happens when too many items are removed,
         // and the fillGird() cannot fill to the bottom. Then scrollBy() is called.
         if(disappearingViewCache.containsKey(mCurrentPosition)){
-            disappearingView = disappearingViewCache.get(mCurrentPosition);
-            view = disappearingView.view;
-        }else { // Otherwise we get view from the recycler.
-            view = recycler.getViewForPosition(mCurrentPosition);
+            params = disappearingViewCache.get(mCurrentPosition);
         }
+        // Get view from the recycler.
+        view = recycler.getViewForPosition(mCurrentPosition);
+
         final LayoutParams lp = (LayoutParams) view.getLayoutParams();
 
         // Calculate the widthNum and the heightNum.
@@ -707,34 +768,15 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             heightNum = itemLayoutHeightCache.get(mCurrentPosition);
             nextItemIndex = itemOccupiedStartSpan.get(mCurrentPosition);
         }else{
-            // Otherwise, if LayoutParams contains them and isRandomSize = true,
-            // get them from the LayoutParams.
-            if(lp.widthNum != 0 && isRandomSize){
+            // Otherwise, if LayoutParams contains them, get them from the LayoutParams.
+            if(lp.widthNum != 0){
                 widthNum = lp.widthNum;
                 heightNum = lp.heightNum;
             }else{
-                // Otherwise, calculate the widthNum and the heightNum randomly
-                // or according to the size of the child view.
-                if(isRandomSize) {
-                    int nextInt = r.nextInt(100);
-                    if (nextInt > 80) {
-                        widthNum = 2;
-                        heightNum = 2;
-                    } else if (nextInt > 60) {
-                        widthNum = 2;
-                        heightNum = 1;
-                    } else if (nextInt > 40) {
-                        widthNum = 1;
-                        heightNum = 2;
-                    } else {
-                        widthNum = 1;
-                        heightNum = 1;
-                    }
-                }else{
-                    widthNum = Math.min(2, Math.max(1, lp.width / sizePerSpan));
-                    heightNum = Math.min(2, Math.max(1, lp.height / sizePerSpan));
-                }
-                // Store the original widthNum and heightNum in the LayoutParams.
+                // Otherwise, calculate the widthNum and the heightNum
+                // according to the size of the child view.
+                widthNum = Math.min(2, Math.max(1, lp.width / sizePerSpan));
+                heightNum = Math.min(2, Math.max(1, lp.height / sizePerSpan));
                 lp.widthNum = widthNum;
                 lp.heightNum = heightNum;
             }
@@ -754,10 +796,26 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             itemOccupiedStartSpan.put(mCurrentPosition, nextItemIndex);
         }
 
+        // Calculate fake params.
+        if(isPreLayout && !lp.isItemRemoved()){
+            fakeWidthNum = lp.widthNum;
+            fakeHeightNum = lp.heightNum;
+            if(fakeFirstTwoEmptyBottomSpanIndex == -1){
+                fakeWidthNum = 1;
+            }
+            fakeNextItemIndex = fakeWidthNum == 1 ?
+                    fakeFirstOneEmptyBottomSpanIndex : fakeFirstTwoEmptyBottomSpanIndex;
+            fakeItemLayoutWidthCache.put(fakeCurrentPosition, fakeWidthNum);
+            fakeItemLayoutHeightCache.put(fakeCurrentPosition, fakeHeightNum);
+            fakeItemOccupiedStartSpan.put(fakeCurrentPosition, fakeNextItemIndex);
+        }
+
         // Calculate the left, right, top and bottom of the view to be laid out.
         int left = 0, right = 0, top = 0, bottom = 0;
+        int fakeLeft = 0, fakeRight = 0, fakeTop = 0, fakeBottom = 0;
+
         // We do not need to calculate decorations for views in the disappearingViewCache.
-        if(disappearingView == null) {
+        if(params == null) {
             calculateItemDecorationsForChild(view, mDecorInsets);
         }
         left = getPaddingLeft() + spanWidthBorders[nextItemIndex] + lp.leftMargin;
@@ -770,14 +828,28 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             top = getPaddingTop() + spanTop[nextItemIndex] - sizePerSpan * heightNum + lp.topMargin;
         }
 
+        if(isPreLayout && !lp.isItemRemoved()){
+            fakeLeft = getPaddingLeft() + spanWidthBorders[fakeNextItemIndex] + lp.leftMargin;
+            fakeRight = getPaddingLeft() + spanWidthBorders[fakeNextItemIndex + fakeWidthNum]
+                    - lp.rightMargin;
+            fakeTop = getPaddingTop() + fakeSpanBottomMin + lp.topMargin;
+            fakeBottom = getPaddingTop() + fakeSpanBottomMin + sizePerSpan * fakeHeightNum
+                    - lp.bottomMargin;
+        }
+
         // If we lay out the view to fill bottom, add the view to the end.
         if(isFillBottom) {
 
-            if(!isForAnimation){
+            if(!isPreLayout){
                 addView(view);
-            }else{
-                // If we layout for animation, we just lay out views in the visible area.
-                if(bottom + lp.bottomMargin >= getPaddingTop() || firstAttachedItemPosition != -1){
+            }else if(bottom + lp.bottomMargin >= getPaddingTop() || // Attached
+                    firstAttachedItemPosition != -1 ||
+                    fakeBottom + lp.bottomMargin >= getPaddingTop() || // Appearing
+                    fakeFirstAttachedItemPosition != -1){
+                // If it is pre-layout, we just lay out attached views and appearing views.
+                if(lp.isItemRemoved()) {
+                    addDisappearingView(view);
+                } else {
                     addView(view);
                 }
             }
@@ -787,36 +859,52 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
 
         // Make measureSpec.
         int widthSpec, heightSpec;
-        if(disappearingView == null) {
+        int fakeWidthSpec = 0, fakeHeightSpec = 0;
+        if(params == null) {
             widthSpec = View.MeasureSpec.makeMeasureSpec(
                     right - left - mDecorInsets.left - mDecorInsets.right, View.MeasureSpec.EXACTLY);
             heightSpec = View.MeasureSpec.makeMeasureSpec(
                     bottom - top - mDecorInsets.top - mDecorInsets.bottom, View.MeasureSpec.EXACTLY);
         }else{
-            // If disappearingViewCache contains the current view,
+            // If disappearingViewCache contains the params,
             // get the widthSpec and the heightSpec from it.
-            widthSpec = disappearingView.widthSpec;
-            heightSpec = disappearingView.heightSpec;
+            widthSpec = params.widthSpec;
+            heightSpec = params.heightSpec;
         }
+
+        if(isPreLayout && !lp.isItemRemoved()){
+            fakeWidthSpec = View.MeasureSpec.makeMeasureSpec(
+                    fakeRight - fakeLeft - mDecorInsets.left - mDecorInsets.right,
+                    View.MeasureSpec.EXACTLY);
+            fakeHeightSpec = View.MeasureSpec.makeMeasureSpec(
+                    fakeBottom - fakeTop - mDecorInsets.top - mDecorInsets.bottom,
+                    View.MeasureSpec.EXACTLY);
+        }
+
         // Measure child.
-        // If isForAnimation = true, we just measure and lay out views in the visible area.
-        if(!isForAnimation ||
-                (isForAnimation &&
-                        (bottom + lp.bottomMargin >= getPaddingTop() ||
-                                firstAttachedItemPosition != -1))){
+        // If isPreLayout = true, we just measure and lay out attached views and appearing views.
+        if(!isPreLayout ||
+                (isPreLayout && (bottom + lp.bottomMargin >= getPaddingTop() || // Attached
+                                firstAttachedItemPosition != -1 ||
+                                fakeBottom + lp.bottomMargin >= getPaddingTop() || // Appearing
+                                fakeFirstAttachedItemPosition != -1)
+                             && !lp.isItemRemoved())){
             view.measure(widthSpec, heightSpec);
             layoutDecorated(view, left, top, right, bottom);
         }
-        // If isForAnimation = true, for current disappearing views, we put it into cache.
-        if(isForAnimation && bottom + lp.bottomMargin < getPaddingTop() &&
-                firstAttachedItemPosition == -1 &&
-                itemNeededPositionCache.contains(mCurrentPosition)){
-            disappearingViewCache.put(mCurrentPosition,
-                    new DisappearingView(view, widthSpec, heightSpec, left, top, right, bottom));
+        // If isPreLayout = true, for disappearing views, we put the params and position into cache.
+        if(isPreLayout && (bottom + lp.bottomMargin >= getPaddingTop() || // Currently visible
+                           firstAttachedItemPosition != -1)
+                       && (fakeBottom + lp.bottomMargin < getPaddingTop() && // Invisible in real layout
+                           fakeFirstAttachedItemPosition == -1)
+                       && !lp.isItemRemoved()){
+            disappearingViewCache.put(fakeCurrentPosition,
+                    new DisappearingViewParams(fakeWidthSpec, fakeHeightSpec,
+                                                fakeLeft, fakeTop, fakeRight, fakeBottom));
         }
         // For the normal layout,
         // if we lay out a disappearing view, it should be removed from the cache.
-        if(!isForAnimation && disappearingView != null){
+        if(!isPreLayout && params != null){
             disappearingViewCache.remove(mCurrentPosition);
         }
 
@@ -825,18 +913,36 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             for (int i = 0; i < widthNum; i++)
                 spanBottom[nextItemIndex + i] += sizePerSpan * heightNum;
             updateSpanBottomParameters();
-            if(!isForAnimation){
+            if(!isPreLayout){
                 lastAttachedItemPosition = mCurrentPosition;
             }else{
-                // If isForAnimation = true,
-                // we need to update firstAttachedItemPosition and lastAttachedItemPosition.
+                // If isPreLayout = true.
+                for (int i = 0; i < fakeWidthNum; i++)
+                    fakeSpanBottom[fakeNextItemIndex + i] += sizePerSpan * fakeHeightNum;
+                updateFakeSpanBottomParameters();
+                // we need to update fakeFirstAttachedItemPosition and firstAttachedItemPosition.
+                if(fakeFirstAttachedItemPosition == -1 &&
+                        !lp.isItemRemoved() &&
+                        fakeBottom + lp.bottomMargin >= getPaddingTop()){
+                    fakeFirstAttachedItemPosition = fakeCurrentPosition;
+                }
                 if(firstAttachedItemPosition == -1 && bottom + lp.bottomMargin >= getPaddingTop()){
                     firstAttachedItemPosition = mCurrentPosition;
-                }else{
-                    lastAttachedItemPosition = mCurrentPosition;
                 }
             }
             mCurrentPosition++;
+            if(isPreLayout && !lp.isItemRemoved()){
+                fakeCurrentPosition++;
+            }
+            // Update fakeSpanTop and spanTop.
+            if(isPreLayout && fakeFirstAttachedItemPosition == -1){
+                for (int i = 0; i < fakeWidthNum; i++)
+                    fakeSpanTop[fakeNextItemIndex + i] += sizePerSpan * fakeHeightNum;
+            }
+            if(isPreLayout && firstAttachedItemPosition == -1){
+                for (int i = 0; i < widthNum; i++)
+                    spanTop[nextItemIndex + i] += sizePerSpan * heightNum;
+            }
         }else{
             for (int i = 0; i < widthNum; i++)
                 spanTop[nextItemIndex + i] -= sizePerSpan * heightNum;
@@ -844,11 +950,7 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
             firstAttachedItemPosition = mCurrentPosition;
             mCurrentPosition--;
         }
-        // If isForAnimation = true, we need to update spanTop.
-        if(isForAnimation && firstAttachedItemPosition == -1){
-            for (int i = 0; i < widthNum; i++)
-                spanTop[nextItemIndex + i] += sizePerSpan * heightNum;
-        }
+
     }
 
     /**
@@ -983,13 +1085,11 @@ public class IrregularLayoutManager extends RecyclerView.LayoutManager {
         }
     }
 
-    public static class DisappearingView{
-        View view;
+    public static class DisappearingViewParams {
         int left, right, top, bottom;
         int widthSpec, heightSpec;
-        DisappearingView(View view, int widthSpec, int heightSpec,
-                         int left, int top, int right, int bottom){
-            this.view = view;
+        DisappearingViewParams(int widthSpec, int heightSpec,
+                               int left, int top, int right, int bottom){
             this.widthSpec = widthSpec;
             this.heightSpec = heightSpec;
             this.left = left;
