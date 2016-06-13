@@ -21,6 +21,7 @@ import android.support.v4.animation.AnimatorCompatHelper;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.ViewPropertyAnimatorCompat;
 import android.support.v4.view.ViewPropertyAnimatorListener;
+import android.support.v7.widget.DefaultItemAnimator;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.SimpleItemAnimator;
 import android.view.View;
@@ -172,6 +173,20 @@ public class DynamicItemAnimator extends SimpleItemAnimator {
         int fromHeight = preInfo.bottom - preInfo.top;
         int toWidth = postInfo.right - postInfo.left;
         int toHeight = postInfo.bottom - postInfo.top;
+
+        // Bug notation.
+        // The code in the SimpleItemAnimator is as follows.
+        // Note that shouldIgnore() cannot be accessed out of the package.
+        // And I cannot find any replaceable method.
+
+//        if (newHolder.shouldIgnore()) {
+//            toLeft = preInfo.left;
+//            toTop = preInfo.top;
+//        } else {
+//            toLeft = postInfo.left;
+//            toTop = postInfo.top;
+//        }
+
         return animateChange(oldHolder, newHolder, preInfo.left, preInfo.top, postInfo.left, postInfo.top, fromWidth, fromHeight, toWidth, toHeight);
     }
 
